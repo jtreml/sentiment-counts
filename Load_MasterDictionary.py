@@ -3,6 +3,7 @@
 # BDM : 201510
 
 import time
+import re
 
 def load_masterdictionary(file_path, print_flag=False, f_log=None, get_other=False):
     _master_dictionary = {}
@@ -29,6 +30,7 @@ def load_masterdictionary(file_path, print_flag=False, f_log=None, get_other=Fal
         _md_header = f.readline()
         for line in f:
             cols = line.split(',')
+            cols[0] = re.sub('[^\w]+', ' ', cols[0].upper()).strip()
             _master_dictionary[cols[0]] = MasterDictionary(cols, _stopwords)
             _total_documents += _master_dictionary[cols[0]].doc_count
             if len(_master_dictionary) % 5000 == 0 and print_flag:
@@ -70,7 +72,7 @@ def create_sentimentdictionaries(_master_dictionary, _sentiment_categories):
 
 class MasterDictionary:
     def __init__(self, cols, _stopwords):
-        self.word = cols[0].upper()
+        self.word = re.sub('[^\w]+', ' ', cols[0].upper()).strip()
         self.sequence_number = int(cols[1])
         self.word_count = int(cols[2])
         self.word_proportion = float(cols[3])
@@ -106,6 +108,7 @@ class MasterDictionary:
         self.harvard_iv = int(cols[16])
         self.syllables = int(cols[17])
         self.source = cols[18]
+        self.ngram_size = len(re.findall('\w+', self.word))
 
         if self.word in _stopwords:
             self.stopword = True

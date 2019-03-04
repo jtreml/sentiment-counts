@@ -38,6 +38,7 @@ import re
 import string
 import sys
 import time
+from nltk import ngrams
 sys.path.append('D:\GD\Python\TextualAnalysis\Modules')  # Modify to identify path for custom modules
 import Load_MasterDictionary as LM
 
@@ -57,6 +58,28 @@ OUTPUT_FIELDS = ['file name,', 'file size,', 'number of words,', '% positive,', 
 lm_dictionary = LM.load_masterdictionary(MASTER_DICTIONARY_FILE, True)
 
 
+def get_dictonary_per_ngram_len(lm_dictionary):
+    entries = lm_dictionary.values()
+    lm_dictionary_max_ngram_size = max(map(lambda x: x.ngram_size, entries))
+    # print(lm_dictionary_max_ngram_size)
+
+    _lm_dictionary_per_ngram_len = {}
+
+    for i in range(1, lm_dictionary_max_ngram_size + 1):
+        _lm_dictionary_per_ngram_len[i] = {}
+
+    for entry in entries:
+        # print(entry.word)
+        _lm_dictionary_per_ngram_len[entry.ngram_size][entry.word] = entry
+
+    return _lm_dictionary_per_ngram_len
+
+
+lm_dictionary_per_ngram_len = get_dictonary_per_ngram_len(lm_dictionary)
+lm_dictionary_max_ngram_len = max(lm_dictionary_per_ngram_len.keys())
+# print(lm_dictionary_max_ngram_len)
+
+
 def main():
 
     f_out = open(OUTPUT_FILE, 'w')
@@ -65,11 +88,13 @@ def main():
 
     file_list = glob.glob(TARGET_FILES)
     for file in file_list:
-        print(file)
+        # print(file)
         with open(file, 'r', encoding='UTF-8', errors='ignore') as f_in:
             doc = f_in.read()
         doc_len = len(doc)
+        # print('>' + doc + '<')
         doc = re.sub('(May|MAY)', ' ', doc)  # drop all May month references
+        # print('>' + doc + '<')
         doc = doc.upper()  # for this parse caps aren't informative so shift
 
         output_data = get_data(doc)
@@ -84,7 +109,72 @@ def get_data(doc):
     _odata = [0] * 17
     total_syllables = 0
     word_length = 0
-    
+
+    clean_doc = doc = re.sub('[^\w]+', ' ', doc).strip()  # normalize whitespace and hyphens
+    # print('>' + clean_doc + '<')
+    clean_doc_tokens = clean_doc.split()
+
+    # Create data structure to store occurence counts
+    ngram_stats = {}
+    for i in range(1, lm_dictionary_max_ngram_len + 1):
+        ngram_stats[i] = {}
+    for ngram_len in lm_dictionary_per_ngram_len:
+        for ngram in lm_dictionary_per_ngram_len[ngram_len]:
+            ngram_stats[ngram_len][ngram] = 0
+
+    # Run through different ngram lengths and for each
+    # split text into ngrams of that length, iterate over those
+    # and increase occurence count for each one corresponding
+    # to a dictionary entry
+    for i in range(1, lm_dictionary_max_ngram_len + 1):
+        doc_ngrams = ngrams(clean_doc_tokens, i)
+        for doc_ngram in doc_ngrams:
+            str_doc_ngram = ' '.join(doc_ngram)
+            # print(str_doc_ngram)
+            if str_doc_ngram in ngram_stats[i]:
+                ngram_stats[i][str_doc_ngram] += 1
+
+    # print()
+    # print('Stats before correction:')
+    # print('------------------------')
+    # for i in range(1, lm_dictionary_max_ngram_len + 1):
+    #     for ngram_n in lm_dictionary_per_ngram_len[i]:
+    #         print(ngram_n + ': ' + str(ngram_stats[i][ngram_n]))
+
+    # Correct counts for ngrams of lower order contained in ngrams of higher order
+    # Note: This doesn't work reliably for overlapping ngrams. That would require
+    # detailed tracking of the positiong of each occureance
+    for i in range(1, lm_dictionary_max_ngram_len):
+        for ngram_n in lm_dictionary_per_ngram_len[i]:
+            for ngram_n_plus_1 in lm_dictionary_per_ngram_len[i + 1]:
+                if ' ' + ngram_n + ' ' in ' ' + ngram_n_plus_1 + ' ':
+                    ngram_stats[i][ngram_n] -= ngram_stats[i + 1][ngram_n_plus_1]
+
+    # print()
+    # print('Stats after correction:')
+    # print('-----------------------')
+    # for i in range(1, lm_dictionary_max_ngram_len + 1):
+    #     for ngram_n in lm_dictionary_per_ngram_len[i]:
+    #         print(ngram_n + ': ' + str(ngram_stats[i][ngram_n]))
+
+    # For each ngram in the dictionary, accumulate the statistics based on 
+    # the number of occurences of it
+    for ngram_len in lm_dictionary_per_ngram_len:
+        for ngram in lm_dictionary_per_ngram_len[ngram_len]:
+            count = ngram_stats[ngram_len][ngram]
+            if count > 0:
+                if lm_dictionary[ngram].positive: _odata[3] += count
+                if lm_dictionary[ngram].negative: _odata[4] += count
+                if lm_dictionary[ngram].uncertainty: _odata[5] += count
+                if lm_dictionary[ngram].litigious: _odata[6] += count
+                if lm_dictionary[ngram].weak_modal: _odata[7] += count
+                if lm_dictionary[ngram].moderate_modal: _odata[8] += count
+                if lm_dictionary[ngram].strong_modal: _odata[9] += count
+                if lm_dictionary[ngram].constraining: _odata[10] += count
+                total_syllables += lm_dictionary[ngram].syllables * count
+
+    # Leave the old logic here for counting words, average word length
+    # and average syllables
     tokens = re.findall('\w+', doc)  # Note that \w+ splits hyphenated words
     for token in tokens:
         if not token.isdigit() and len(token) > 1 and token in lm_dictionary:
@@ -92,15 +182,6 @@ def get_data(doc):
             word_length += len(token)
             if token not in vdictionary:
                 vdictionary[token] = 1
-            if lm_dictionary[token].positive: _odata[3] += 1
-            if lm_dictionary[token].negative: _odata[4] += 1
-            if lm_dictionary[token].uncertainty: _odata[5] += 1
-            if lm_dictionary[token].litigious: _odata[6] += 1
-            if lm_dictionary[token].weak_modal: _odata[7] += 1
-            if lm_dictionary[token].moderate_modal: _odata[8] += 1
-            if lm_dictionary[token].strong_modal: _odata[9] += 1
-            if lm_dictionary[token].constraining: _odata[10] += 1
-            total_syllables += lm_dictionary[token].syllables
 
     _odata[11] = len(re.findall('[A-Z]', doc))
     _odata[12] = len(re.findall('[0-9]', doc))
